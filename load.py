@@ -165,3 +165,8 @@ plt.ylabel('Samples')
 
 
 
+plt.subplot(331)
+plt.subplot(332)
+plt.subplot(335)
+
+
