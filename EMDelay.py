@@ -10,13 +10,14 @@ import seaborn as sns
 import emd
 import biosignalsnotebooks as bsnb
 
-from force import force_calib, force_onset
+from force import force_calib, force_onset, convertAcc, \
+    smooth, convertToMilivolts, sync, sync_with_delay
 
 sns.set()
 
 # Load file #
 
-filename = 'Test_Force_2021-10-26_10-44-47.txt'
+filename = 'EMD_test_2021-10-27_09-16-40.txt'
 file = np.loadtxt(filename)
 
 # Parameters #
@@ -24,7 +25,7 @@ file = np.loadtxt(filename)
 sr = 1000
 wind_sm = 101
 
-# EMD delay part #
+# Organize data #
 
 calib_name = 'Acc_calib_new.txt'
 calib = np.loadtxt(calib_name)
@@ -33,162 +34,205 @@ x_calib = calib[:, 2]
 y_calib = calib[:, 3]
 z_calib = calib[:, 4]
 
-names = {'Force': file[:, 5], 'X_hub': file[:, 2], 'Y_hub': file[:, 3], 'Z_hub': file[:, 4],
-         'EMG_Bic': file[:, 7], 'X_mb_bic': file[:, 8], 'Y_mb_bic': file[:, 9], 'Z_mb_bic': file[:, 10],
-         'EMG_Tri': file[:, 12], 'X_mb_tri': file[:, 13], 'Y_mb_tri': file[:, 14], 'Z_mb_tri': file[:, 15]}
+names = {'ForceSq': file[:, 5], 'ForceLg': file[:, 6], 'X_hub': file[:, 2], 'Y_hub': file[:, 3], 'Z_hub': file[:, 4],
+         'EMG_tri': file[:, 8], 'X_tri': file[:, 9], 'Y_tri': file[:, 10], 'Z_tri': file[:, 11],
+         'EMG_bic': file[:, 13], 'X_bic': file[:, 14], 'Y_bic': file[:, 15], 'Z_bic': file[:, 16]}
 data = pd.DataFrame(names)
 
-# Force #
+# Preprocessing #
 
-channel_force = 6
-force = file[:17500, channel_force]
+## Force #
 
-## Conversion ##
+### Conversion ###
 
-force_conv = force_calib(force)
+force_conv_sq = force_calib(data['ForceSq'])
+force_conv_lg = force_calib(data['ForceLg'])
 
-## Filtering ##
+### Filtering ###
 
-# Order equal to one is similar to the smooth function with the same window length #
+# 'Order equal to one is similar to the smooth function with the same window length' #
 
-force_f = si.savgol_filter(force_conv, wind_sm, 1)
+force_f_sq = si.savgol_filter(force_conv_sq, wind_sm, 1)
+force_f_lg = si.savgol_filter(force_conv_lg, wind_sm, 1)
 
-## Normalization ##
+### Normalization ###
 
-force_n = force_f / np.max(force_f)
+force_n_sq = force_f_sq / np.max(force_f_sq)
+force_n_lg = force_f_lg / np.max(force_f_lg)
 
-## Force onset ##
+force_sq = force_n_sq
+force_lg = force_n_lg
 
-thr = np.mean(force_n[:2000]) + .05
-ind = (force_n > thr).astype(int)
+## Accelerometer ##
 
-# Determine onset #
+### Conversion ###
 
-ind_diff = np.concatenate([[0], ind[1:] - ind[:-1]])
-diff_loc = np.where(ind_diff == 1)[0]
+acc_conv_hub = np.zeros((len(file), 3))
+acc_conv_tri = np.zeros((len(file), 3))
+acc_conv_bic = np.zeros((len(file), 3))
 
-plt.scatter(diff_loc, ind_diff[diff_loc], color='red')
-plt.plot(ind_diff)
-plt.plot(ind)
-plt.plot(force_n)
+for ii in range(2, 5):
+    acc_conv_hub[:, ii-2] = convertAcc(file[:, ii], calib[:, ii])
 
-# Accelerometer #
+for ii in range(9, 12):
+    acc_conv_tri[:, ii-9] = convertAcc(file[:, ii], calib[:, ii-7])
 
-## Conversion ##
+for ii in range(14, 17):
+    acc_conv_bic[:, ii-14] = convertAcc(file[:, ii], calib[:, ii-12])
 
-acc_n = 4
-acc = file[:17500, acc_n]
+### Baseline shift ###
 
-acc_conv = convertAcc(acc, z_calib)
+for ii in range(0, 3):
+    acc_conv_hub[:, ii] = acc_conv_hub[:, ii] - np.max(acc_conv_hub[:, ii])
 
-## Baseline shift ##
+for ii in range(0, 3):
+    acc_conv_tri[:, ii] = acc_conv_tri[:, ii] - np.max(acc_conv_tri[:, ii])
 
-acc_conv = acc_conv - np.mean(acc_conv)
+for ii in range(0, 3):
+    acc_conv_bic[:, ii] = acc_conv_bic[:, ii] - np.max(acc_conv_bic[:, ii])
 
-## Filtering ##
+### Filtering ###
 
-acc_f = si.savgol_filter(acc_conv, wind_sm, 1)
+acc_f_hub = np.zeros_like(acc_conv_hub)
+acc_f_tri = np.zeros_like(acc_conv_tri)
+acc_f_bic = np.zeros_like(acc_conv_bic)
 
-## Onset determination ##
+for ii in range(0, 3):
+    acc_f_hub[:, ii] = si.savgol_filter(acc_conv_hub[:, ii], wind_sm, 1)
 
-acc_h = si.hilbert(acc_f)
-acc_i = np.imag(acc_h)
-imf = emd.sift.mask_sift(acc_i)
+for ii in range(0, 3):
+    acc_f_tri[:, ii] = si.savgol_filter(acc_conv_tri[:, ii], wind_sm, 1)
 
-emd.plotting.plot_imfs(imf, cmap=True)
+for ii in range(0, 3):
+    acc_f_bic[:, ii] = si.savgol_filter(acc_conv_bic[:, ii], wind_sm, 1)
 
-comp = imf[:, 1] + imf[:, 2]
-
-onsets = si.find_peaks(comp, height=)[0]
-
-x_hub = convertAcc(data['X_hub'], x_calib)
-y_hub = convertAcc(data['Y_hub'], y_calib)
-z_hub = convertAcc(data['Z_hub'], z_calib)
-x_mb_bic = convertAcc(data['X_mb_bic'], x_calib)
-x_mb_tri = convertAcc(data['X_mb_tri'], x_calib)
-y_mb_bic = convertAcc(data['Y_mb_bic'], y_calib)
-y_mb_tri = convertAcc(data['Y_mb_tri'], y_calib)
-z_mb_bic = convertAcc(data['Z_mb_bic'], z_calib)
-z_mb_tri = convertAcc(data['Z_mb_tri'], z_calib)
-
-x_hub = x_hub - np.mean(x_hub)
-y_hub = z_hub - np.mean(y_hub)
-z_hub = z_hub - np.mean(z_hub)
-x_mb_bic = x_mb_bic - np.mean(x_mb_bic)
-x_mb_tri = x_mb_tri - np.mean(x_mb_tri)
-y_mb_bic = y_mb_bic - np.mean(y_mb_bic)
-y_mb_tri = y_mb_tri - np.mean(y_mb_tri)
-z_mb_bic = z_mb_bic - np.mean(z_mb_bic)
-z_mb_tri = z_mb_tri - np.mean(z_mb_tri)
+acc_hub = acc_f_hub
+acc_tri = acc_f_tri
+acc_bic = acc_f_bic
 
 
 ## EMG ##
 
-def convertToMilivolts(x):
-    return ((((x / 2 ** 16) - (1 / 2)) * 3) / 1000) * 1e3
+### Converstions ###
+
+bicep_conv = convertToMilivolts(data['EMG_bic'])
+tricep_conv = convertToMilivolts(data['EMG_tri'])
+
+### Baseline Shift ###
+
+bicep_conv = bicep_conv - np.mean(bicep_conv)
+tricep_conv = tricep_conv - np.mean(tricep_conv)
+
+### Filtering ###
+
+bicep_f = ni.bandpass(bicep_conv, 10, 499, order=4, fs=sr, use_filtfilt=True)
+tricep_f = ni.bandpass(tricep_conv, 10, 499, order=4, fs=sr, use_filtfilt=True)
+
+biceps = bicep_f
+triceps = tricep_f
 
 
-bicep = convertToMilivolts(data['EMG_Bic'])
-tricep = convertToMilivolts(data['EMG_Tri'])
+# Synchronization #
 
-bicep = bicep - np.mean(bicep)
-tricep = tricep - np.mean(tricep)
+x_hub = acc_hub[:, 0]
+y_hub = acc_hub[:, 1]
+z_hub = acc_hub[:, 2]
+x_tri = acc_tri[:, 0] * (-1)
+x_tri, delay_tri = sync(y_hub, x_tri)
+y_tri = sync_with_delay(acc_tri[:, 1], delay_tri)
+z_tri = sync_with_delay(acc_tri[:, 2], delay_tri)
+emg_tri = sync_with_delay(triceps, delay_tri)
 
-bicep_f = ni.bandpass(bicep, 10, 499, order=4, fs=sr, use_filtfilt=True)
-tricep_f = ni.bandpass(tricep, 10, 499, order=4, fs=sr, use_filtfilt=True)
+y_hub = acc_hub[:, 1]
+x_bic = acc_bic[:, 0] * (-1)
+x_bic, delay_bic = sync(y_hub, x_bic)
+y_bic = sync_with_delay(acc_bic[:, 1], delay_bic)
+z_bic = sync_with_delay(acc_bic[:, 2], delay_bic)
+emg_bic = sync_with_delay(biceps, delay_bic)
+
+# Cut the first 20 seconds #
+
+# Onset determination #
+
+## Force ##
+
+### Threshold method ###
+
+thr_lg = np.mean(force_lg[:2000]) + 0.04
+
+ind_lg = (force_lg > thr_lg).astype(int)
+
+ind_diff_lg = np.concatenate([[0], ind_lg[1:] - ind_lg[:-1]])
+
+loc_lg = np.where(ind_diff_lg == 1)[0]
+
+### Hilbert method ###
+
+force_sq_h = si.hilbert(force_sq)
+force_sq_im = np.diff(np.imag(force_sq_h))
+force_sq_im = smooth(force_sq_im, 50)
+force_sq_im = (force_sq_im - np.mean(force_sq_im))/ np.std(force_sq_im)
+loc_sq = si.find_peaks(force_sq_im, height=2, distance=2250)[0]
+
+dist = np.zeros(len(loc_sq))
+onsets_sq = np.zeros(len(loc_sq))
+jj = 0
+
+for ii in loc_sq:
+    dist[jj] = np.argmin(force_sq_im[ii-250: ii])
+    onsets_sq[jj] = ii - 250 + dist[jj]
+    jj = jj + 1
+
+onsets_sq = onsets_sq.astype(int)
+
+ax1 = plt.subplot(211)
+ax1.scatter(onsets_sq, force_sq_im[onsets_sq], color='red')
+ax1.plot(force_sq_im)
+ax1.plot(force_sq*10)
+ax1.vlines(onsets_sq, -5, 10, colors='red')
+
+ax2 = plt.subplot(212, sharex=ax1)
+ax2.scatter(loc_lg, ind_diff_lg[loc_lg], color='red')
+ax2.plot(ind_diff_lg)
+ax2.plot(ind_lg)
+ax2.plot(force_lg)
+ax2.vlines(onsets_sq, -0.9, 0.9, colors='red')
+
+## Onset determination ##
+
+ref = force_sq_im[41000:-4000]
+z_h = si.hilbert(z_hub[40000:-4000])
+z_i = np.imag(z_h)
+z_imf = emd.sift.mask_sift(z_i)
+
+emd.plotting.plot_imfs(z_imf, cmap=True)
+
+comp = z_imf[:, 1] + z_imf[:, 2] + z_imf[:, 3] + z_imf[:, 4] + z_imf[:, 5]
+comp = comp[1001:] / np.max(comp[1001:])
+comp = abs(comp)
+plt.plot(comp)
+plt.plot(ref)
+
+onsets = si.find_peaks(comp, height=0.15)[0]
+dif_onsets = np.diff(onsets)
+peaks_dif = np.concatenate(([0], dif_onsets))
+first_peak = peaks_dif > 1400
+onsets_1 = onsets[first_peak]
+onsets_1 = np.concatenate(([onsets[0]], onsets_1))
+plt.scatter(onsets_1, comp[onsets_1], color='red')
+plt.plot(comp*6)
+plt.plot(ref)
+plt.vlines(onsets_1, -5, 10)
+
+plt.plot(onsets, 'o-')
+plt.plot(dif_onsets, 'o-')
 
 
-# Force conversion #
 
-
-def force_calib(force_signal):
-    # Step 1: Calculate voltage output of the sensor #
-    volt_signal = (3 * force_signal) / (2 ** 16)
-
-    # Step 2: Calculate sensor conductance ###
-    cond_signal = volt_signal / ((6 - volt_signal) * 47)
-
-    # Step 3: Acquire calibration signal ###
-    result = ss.linregress(volt_signal, cond_signal)
-
-    # Step 4: Convert data #
-    converted_force = cond_signal / abs(result.slope)
-
-    return converted_force
-
-
-force_conv = force_calib(data['Force'])
-
-
-## ACC smooth ##
-
-def smooth(y, win_size):
-    window = np.ones(win_size) / win_size
-    y_smooth = np.convolve(y, window, mode='same')
-
-    return y_smooth
-
-
-def rms(signal, win_size):
-    signal2 = np.power(signal, 2)
-    window = np.ones(win_size) / float(win_size)
-    rms_signal = np.sqrt(np.convolve(signal2, window, 'valid'))
-
-    return rms_signal
-
-
-wind = 101
-
-x_hub_s = smooth(x_hub, wind)
-x_mb_bic_s = smooth(x_mb_bic, wind)
-x_mb_tri_s = smooth(x_mb_tri, wind)
-y_hub_s = smooth(y_hub, wind)
-y_mb_bic_s = smooth(y_mb_bic, wind)
-y_mb_tri_s = smooth(y_mb_tri, wind)
-z_hub_s = smooth(z_hub, wind)
-z_mb_bic_s = smooth(z_mb_bic, wind)
-z_mb_tri_s = smooth(z_mb_tri, wind)
-
+a = si.morlet(len(comp)-15000, w=5.0, s=1.0)
+b = si.convolve(comp, a, 'same')
+plt.plot(b)
+plt.plot(ref*20)
 
 ## EMG preprocessing ##
 
