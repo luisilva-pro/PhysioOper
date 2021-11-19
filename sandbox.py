@@ -28,5 +28,6 @@ plt.plot(rsp_l)
 
 plt.show()
 
+print(tam(path1, report='distance'))
 
 

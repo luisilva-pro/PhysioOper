@@ -112,11 +112,11 @@ def tam(path, report='full'):
     """
 
     # Delay and advance counting
-    delay = len(np.where(np.diff(path[0]) == 0))
-    advance = len(np.where(np.diff(path[1]) == 0))
+    delay = len(np.where(np.diff(path[0]) == 0)[0])
+    advance = len(np.where(np.diff(path[1]) == 0)[0])
 
     # Phase counting
-    incumbent = np.where((np.diff(path[0]) == 1) * (np.diff(path[1]) == 1))
+    incumbent = np.where((np.diff(path[0]) == 1) * (np.diff(path[1]) == 1))[0]
     phase = len(incumbent)
 
     # Estimated and reference time series duration.
