@@ -2,6 +2,8 @@ import neurokit2 as nk
 import matplotlib.pyplot as plt
 # from dtw import dtw, accelerated_dtw
 import numpy as np
+import pandas as pd
+
 from dtw_duarte import *
 
 rsp_u = nk.rsp_simulate(duration=60, sampling_rate=250, respiratory_rate=15)[::10]
@@ -30,4 +32,10 @@ plt.show()
 
 print(tam(path1, report='distance'))
 
+yp = pd.Series(y)
+yp = yp.interpolate(limit_direction='both', kind='cubic')
 
+a = pd.DataFrame(np.linspace(1, 100, 100))
+rolling = a.rolling(window=10, closed='both')
+rolling_mean = rolling.mean()
+len(rolling_mean)
